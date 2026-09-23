@@ -176,13 +176,14 @@ const PAGES = [
 ];
 
 // One self-contained "+ Walls" scene: its own canvas/renderer/units, living inside `container`. Returns
-// { step, dispose, recolorSvg, captureJpg } — step() re-measures the container and renders one frame
+// { step, dispose, recolorSvg, captureImage } — step() re-measures the container and renders one frame
 // (called every RAF while this page is the active one); dispose() tears the WebGL context + textures
 // down when navigating away, since only one page's scene is ever meant to be alive at once (see
 // mountPage); recolorSvg(bg, ink) re-rasterises an 'svg'-type page's texture with new colours on the fly
 // — either argument can be left null to leave that one alone — for the MIT SA+P colour pickers;
-// captureJpg(minWidth) renders one high-res frame and returns it as a JPEG data URL, for the download
-// button (works for every page type, since it just rasterises whatever's currently on screen).
+// captureImage(minWidth, transparent) renders one high-res frame and returns it as a data URL (JPEG
+// normally, or PNG with a transparent background when transparent is true), for the download button
+// (works for every page type, since it just rasterises whatever's currently on screen).
 function createWallScene(container, cfg) {
     let canvas = document.createElement('canvas');
     let renderer, scene, camera, unitGeo, edgeGeo, edgeMat;
@@ -192,7 +193,7 @@ function createWallScene(container, cfg) {
         renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
         renderer.setPixelRatio(window.devicePixelRatio || 1);
     } catch (e) {
-        return { step() {}, dispose() {}, recolorSvg() {}, captureJpg() { return null; } };
+        return { step() {}, dispose() {}, recolorSvg() {}, captureImage() { return null; } };
     }
     container.appendChild(canvas);
 
@@ -382,7 +383,7 @@ function createWallScene(container, cfg) {
     }
 
     // Renders one frame at (at least) minWidth px wide — same composition/framing as what's on screen,
-    // just supersampled to export resolution — and returns it as a JPEG data URL. Two things the naive
+    // just supersampled to export resolution — and returns it as a data URL. Two things the naive
     // version of this got wrong, both fixed below:
     //  - d (camera distance) must NOT be recomputed from the new, larger h the way step() computes it
     //    from the live container height. That formula is deliberately self-cancelling (see step()'s own
@@ -391,14 +392,15 @@ function createWallScene(container, cfg) {
     //    absolute-pixel-sized content instead of making that content bigger too. d is computed once from
     //    the real on-screen (unscaled) height and held fixed, so scaling w/h up scales the content with
     //    them — a genuine higher-resolution render of the same view, not a zoomed-out one.
-    //  - this renderer is alpha:true so the section's own CSS background shows through on screen; JPEG
-    //    has no alpha channel, so without an explicit opaque clear colour that transparency flattens to
-    //    solid black on export instead. Sets the clear colour to the page's own sectionBg for the
-    //    capture and restores the transparent default step() relies on immediately after.
+    //  - this renderer is alpha:true so the section's own CSS background shows through on screen; a
+    //    format with no alpha channel (JPEG) would flatten that transparency to solid black on export
+    //    without an explicit opaque clear colour. transparent picks between the two: false renders an
+    //    opaque cfg.sectionBg backing and exports JPEG; true leaves the clear fully transparent (already
+    //    the renderer's resting state — nothing to set) and exports PNG, which actually preserves it.
     // No pad here (unlike step()) — the pad exists purely so units can poke past the container's own
     // edge under the section's own overflow: hidden crop; capturing the container's raw, unpadded rect
     // instead already matches that cropped result exactly, with no separate crop step needed.
-    function captureJpg(minWidth) {
+    function captureImage(minWidth, transparent) {
         let rect = container.getBoundingClientRect();
         let baseW = Math.max(1, rect.width), baseH = Math.max(1, rect.height);
         let fov = 50;
@@ -415,10 +417,11 @@ function createWallScene(container, cfg) {
         camera.position.set(0, 0, d);
         camera.lookAt(0, 0, 0);
         camera.updateProjectionMatrix();
-        renderer.setClearColor(new THREE.Color(cfg.sectionBg || '#ffffff'), 1);
+        if (transparent) renderer.setClearColor(0x000000, 0);
+        else renderer.setClearColor(new THREE.Color(cfg.sectionBg || '#ffffff'), 1);
         renderer.render(scene, camera);
 
-        let dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+        let dataUrl = transparent ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.92);
         renderer.setClearColor(0x000000, 0);
         renderer.setPixelRatio(oldPixelRatio);
         return dataUrl;
@@ -435,7 +438,7 @@ function createWallScene(container, cfg) {
         if (canvas.parentNode) canvas.parentNode.removeChild(canvas);
     }
 
-    return { step, dispose, recolorSvg, captureJpg };
+    return { step, dispose, recolorSvg, captureImage };
 }
 
 // ── colour pickers (MIT SA+P only, for now) ──────────────────────────────────────────────────
@@ -457,38 +460,44 @@ function buildPickers(section, scene, cfg) {
         row.appendChild(input);
         panel.appendChild(row);
     }
-    addRow('Background', cfg.sectionBg, v => { cfg.sectionBg = v; section.style.background = v; });
+    addRow('Background', cfg.sectionBg, v => { cfg.sectionBg = v; applySectionBg(section, cfg); });
     addRow('Walls', cfg.wallBg, v => scene.recolorSvg(v, null));
     addRow('Text', cfg.wallInk, v => scene.recolorSvg(null, v));
     document.body.appendChild(panel);
     return panel;
 }
 
-// ── JPG export ────────────────────────────────────────────────────────────────────────────────
-// Downloads a high-res JPEG of whatever the current page's scene looks like right now — works for every
-// page type (the earlier attempt at a real vector-SVG export only ever worked for the 'svg'-texture
-// pages, and even there fetch()-ing the source file back out turned out not to work reliably, so this
-// replaces it outright rather than living alongside it). DOWNLOAD_JPG_MIN_WIDTH is a floor, not a fixed
-// size — a page already wider than that on screen exports at its own (higher) resolution, never
-// downscaled.
-const DOWNLOAD_JPG_MIN_WIDTH = 3000;
+// ── image export ─────────────────────────────────────────────────────────────────────────────
+// Downloads a high-res capture of whatever the current page's scene looks like right now — works for
+// every page type (the earlier attempt at a real vector-SVG export only ever worked for the
+// 'svg'-texture pages, and even there fetch()-ing the source file back out turned out not to work
+// reliably, so this replaces it outright rather than living alongside it). DOWNLOAD_IMAGE_MIN_WIDTH is a
+// floor, not a fixed size — a page already wider than that on screen exports at its own (higher)
+// resolution, never downscaled. transparentBg (toggled by the "Transparent background" checkbox in the
+// nav) is the one setting that isn't per-page — it applies to whichever canvas is on screen, live section
+// background included, so the preview always shows what a download would actually produce.
+const DOWNLOAD_IMAGE_MIN_WIDTH = 3000;
+let transparentBg = false;
+function applySectionBg(section, cfg) {
+    section.style.background = transparentBg ? 'transparent' : (cfg.sectionBg || 'transparent');
+}
 function downloadFileBase(page) {
     return page.nav.replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '');
 }
-function downloadCurrentJpg() {
+function downloadCurrentImage() {
     if (!activePage || !activeScene) return;
-    let dataUrl = activeScene.captureJpg(DOWNLOAD_JPG_MIN_WIDTH);
+    let dataUrl = activeScene.captureImage(DOWNLOAD_IMAGE_MIN_WIDTH, transparentBg);
     if (!dataUrl) return;
     let a = document.createElement('a');
     a.href = dataUrl;
-    a.download = downloadFileBase(activePage) + '.jpg';
+    a.download = downloadFileBase(activePage) + (transparentBg ? '.png' : '.jpg');
     document.body.appendChild(a);
     a.click();
     a.remove();
 }
 
 // ── page mounting + bottom nav ───────────────────────────────────────────────────────────────
-let activePage = null, activeScene = null, activeSectionEl = null, activePickerEl = null;
+let activePage = null, activeScene = null, activeSectionEl = null, activePickerEl = null, activeCfg = null;
 
 function mountPage(page) {
     if (activeScene) activeScene.dispose();
@@ -503,16 +512,15 @@ function mountPage(page) {
 
     let section = document.createElement('div');
     section.className = 'wall-section';
-    css(section, {
-        width: cfg.sectionWidth, height: cfg.sectionHeight, background: cfg.sectionBg || 'transparent',
-        aspectRatio: cfg.sectionAspect || 'auto',
-    });
+    css(section, { width: cfg.sectionWidth, height: cfg.sectionHeight, aspectRatio: cfg.sectionAspect || 'auto' });
+    applySectionBg(section, cfg);
 
     let navEl = document.querySelector('.wall-nav');
     document.body.insertBefore(section, navEl);
 
     activePage = page;
     activeSectionEl = section;
+    activeCfg = cfg;
     activeScene = createWallScene(section, cfg);
     if (page.pickers) activePickerEl = buildPickers(section, activeScene, cfg);
 }
@@ -537,14 +545,31 @@ function buildNav() {
         nav.appendChild(row);
     });
 
-    // Next to the page buttons, not one of them — downloads a high-res JPEG of whichever page is
-    // currently active (see downloadCurrentJpg). Works for every page type.
+    // Next to the page buttons, not one of them — downloads a high-res capture of whichever page is
+    // currently active (see downloadCurrentImage). Works for every page type. The checkbox is the one
+    // nav control that isn't a page switch: toggling it flips the live preview's own background to
+    // match what a download will actually produce, and switches the download itself between an opaque
+    // JPEG and a transparent PNG (see applySectionBg / downloadCurrentImage).
     let utilRow = document.createElement('div');
     utilRow.className = 'wall-nav-row';
     let downloadBtn = document.createElement('button');
     downloadBtn.type = 'button';
     downloadBtn.textContent = 'Download JPG';
-    downloadBtn.addEventListener('click', downloadCurrentJpg);
+    downloadBtn.addEventListener('click', downloadCurrentImage);
+
+    let transparentLabel = document.createElement('label');
+    transparentLabel.className = 'wall-nav-check';
+    let transparentInput = document.createElement('input');
+    transparentInput.type = 'checkbox';
+    transparentInput.addEventListener('change', () => {
+        transparentBg = transparentInput.checked;
+        downloadBtn.textContent = transparentBg ? 'Download PNG' : 'Download JPG';
+        if (activeSectionEl && activeCfg) applySectionBg(activeSectionEl, activeCfg);
+    });
+    transparentLabel.appendChild(transparentInput);
+    transparentLabel.appendChild(document.createTextNode('Transparent background'));
+
+    utilRow.appendChild(transparentLabel);
     utilRow.appendChild(downloadBtn);
     nav.appendChild(utilRow);
 
