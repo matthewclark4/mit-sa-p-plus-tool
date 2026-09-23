@@ -454,7 +454,7 @@ function buildPickers(section, scene, cfg) {
         row.appendChild(input);
         panel.appendChild(row);
     }
-    addRow('Background', cfg.sectionBg, v => { section.style.background = v; });
+    addRow('Background', cfg.sectionBg, v => { cfg.sectionBg = v; section.style.background = v; });
     addRow('Walls', cfg.wallBg, v => scene.recolorSvg(v, null));
     addRow('Text', cfg.wallInk, v => scene.recolorSvg(null, v));
     document.body.appendChild(panel);
