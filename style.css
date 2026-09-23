@@ -46,7 +46,7 @@ canvas {
 .wall-nav {
   position: fixed;
   right: 0;
-  bottom: 0;
+  bottom: 75px;
   z-index: 10;
   max-width: min(420px, 100vw);
   display: flex;
