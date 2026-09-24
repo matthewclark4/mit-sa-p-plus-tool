@@ -166,13 +166,13 @@ const PAGES = [
 
     { id: 'header-research', type: 'header', nav: 'Header: Research', zoom: 2.50,
       faceImage: SVG_DIR + 'Heading – Research.svg',
-      sectionBg: '#ffffff', wallBg: '#E0FD65', wallInk: '#ffffff' },
+      sectionBg: '#F5F5F5', wallBg: '#E0FD65', wallInk: '#ffffff' },
     { id: 'header-academics', type: 'header', nav: 'Header: Academics', zoom: 2.00,
       faceImage: SVG_DIR + 'Heading – Academics.svg',
-      sectionBg: '#ffffff', wallBg: '#EEB1FF', wallInk: '#ffffff' },
+      sectionBg: '#F5F5F5', wallBg: '#EEB1FF', wallInk: '#ffffff' },
     { id: 'header-about', type: 'header', nav: 'Header: About', zoom: 2.50,
       faceImage: SVG_DIR + 'Heading – About.svg',
-      sectionBg: '#ffffff', wallBg: '#FFC486', wallInk: '#ffffff' },
+      sectionBg: '#F5F5F5', wallBg: '#FFC486', wallInk: '#ffffff' },
 ];
 
 // One self-contained "+ Walls" scene: its own canvas/renderer/units, living inside `container`. Returns
